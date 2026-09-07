@@ -6069,7 +6069,7 @@ function renderProdVentas(){
     return`<div class="irow">
       <div class="iinfo">
         <div class="inombre">${p?.nombre||'Producto'} × ${v.cant||1}</div>
-        <div class="isub">${v.cliente||'—'} · ${ff(pk(v.fecha))} · ${v.metodo}</div>
+        <div class="isub">${v.cliente||'—'} · ${ff(pk(v.fecha))} · ${v.pendiente?'<span style="color:#c0392b;font-weight:600">🕐 Pendiente de cobro</span>':v.metodo}</div>
         ${prof?'<div class="isub" style="color:var(--oliva)">Comisión '+prof.n+': '+fmtPeso((v.precio||0)*(v.cant||1)*((p&&p.comisionPct)||0)/100)+'</div>':''}
       </div>
       <div style="text-align:right;flex-shrink:0">
@@ -6089,12 +6089,54 @@ function abrirModalVentaProd(id){
   document.getElementById('mvp-cliente').value='';
   document.getElementById('mvp-metodo').value='efectivo';
   document.getElementById('mvp-fecha').value=hoy();
+  document.getElementById('mvp-pendiente').checked=false;
   const sel=document.getElementById('mvp-prod');
   sel.innerHTML=prodD.productos.map(p=>`<option value="${p.id}">${p.nombre} — ${fmtPeso(p.precio)}</option>`).join('');
   if(prodD.productos.length)document.getElementById('mvp-precio').value=prodD.productos[0]?.precio||0;
   sel.onchange=()=>{const p=prodD.productos.find(x=>x.id===sel.value);if(p)document.getElementById('mvp-precio').value=p.precio};
   document.getElementById('ok-mvp').classList.remove('on');document.getElementById('er-mvp').classList.remove('on');
+  mvpTogglePendiente();
   document.getElementById('modal-venta-prod').classList.add('on');
+}
+
+// Al tildar "dejar pendiente de cobro", se oculta el método de pago (no entra plata ahora)
+// y se muestra info de la cuenta corriente de la clienta escrita en el campo.
+function mvpTogglePendiente(){
+  const chk=document.getElementById('mvp-pendiente');
+  const metodoWrap=document.getElementById('mvp-metodo-wrap');
+  if(!chk)return;
+  if(metodoWrap)metodoWrap.style.display=chk.checked?'none':'block';
+  mvpActualizarInfoCC();
+}
+function mvpActualizarInfoCC(){
+  const chk=document.getElementById('mvp-pendiente');
+  const infoEl=document.getElementById('mvp-cc-info');
+  if(!chk||!infoEl)return;
+  if(!chk.checked){infoEl.style.display='none';return;}
+  const nombre=(document.getElementById('mvp-cliente')||{}).value.trim()||'';
+  if(!nombre){
+    infoEl.style.display='block';infoEl.style.background='rgba(200,80,60,.08)';infoEl.style.color='#c0392b';
+    infoEl.textContent='⚠️ Escribí el nombre de la clienta para dejarle la cuenta pendiente.';
+    return;
+  }
+  const cl=D.clientas.find(function(c){return c.n.toLowerCase()===nombre.toLowerCase();});
+  if(!cl){
+    infoEl.style.display='block';infoEl.style.background='rgba(200,80,60,.08)';infoEl.style.color='#c0392b';
+    infoEl.textContent='⚠️ No encontré a "'+nombre+'" en Clientas. Cargala ahí primero para poder dejarle la cuenta pendiente.';
+    return;
+  }
+  const cc=fichaGetCC(cl);
+  const saldo=cc.saldo;
+  infoEl.style.display='block';
+  if(saldo===0){
+    infoEl.style.background='var(--crema)';infoEl.style.color='var(--gc)';
+    infoEl.textContent='Cuenta sin saldo pendiente por ahora.';
+  }else{
+    const color=saldo>0?'var(--oliva-dark)':'#c0392b';
+    const label=saldo>0?'💳 Ya tiene saldo a favor: ':'⚠️ Ya tiene deuda pendiente: ';
+    infoEl.style.background=saldo>0?'rgba(139,143,107,.1)':'rgba(200,80,60,.08)';infoEl.style.color=color;
+    infoEl.textContent=label+fmtPeso(Math.abs(saldo));
+  }
 }
 
 function guardarVentaProd(){
@@ -6102,11 +6144,20 @@ function guardarVentaProd(){
   const cant=parseInt(document.getElementById('mvp-cant').value)||1;
   const precio=parseFloat(document.getElementById('mvp-precio').value)||0;
   const cliente=document.getElementById('mvp-cliente').value.trim();
-  const metodo=document.getElementById('mvp-metodo').value;
+  const pendiente=document.getElementById('mvp-pendiente').checked;
+  const metodo=pendiente?'cuenta corriente':document.getElementById('mvp-metodo').value;
   const fecha=document.getElementById('mvp-fecha').value;
   const ok=document.getElementById('ok-mvp'),er=document.getElementById('er-mvp');
   ok.classList.remove('on');er.classList.remove('on');
   if(!prodId){er.textContent='Seleccioná un producto.';er.classList.add('on');return}
+  // Si se deja pendiente de cobro, tiene que quedar atada a una clienta real (así el saldo
+  // vive en su cuenta corriente y no se pierde) — no se admite "pendiente" sin clienta.
+  var cl=null;
+  if(pendiente){
+    if(!cliente){er.textContent='Para dejarlo pendiente de cobro, ingresá el nombre de la clienta.';er.classList.add('on');return}
+    cl=D.clientas.find(function(c){return c.n.toLowerCase()===cliente.toLowerCase();});
+    if(!cl){er.textContent='No encontré a "'+cliente+'" en Clientas. Cargala ahí primero para poder dejarle la cuenta pendiente.';er.classList.add('on');return}
+  }
   // Restar stock y registrar deuda si es consignacion
   const p=prodD.productos.find(function(x){return x.id===prodId;});
   if(p){
@@ -6128,24 +6179,46 @@ function guardarVentaProd(){
     }
   }
   const ventaId='v_'+Date.now();
-  prodD.ventas.push({id:ventaId,prodId,cant,precio,cliente,metodo,fecha});
-  // Toda venta de producto tiene que quedar reflejada en Caja también (no solo en Productos):
-  // se registra sola como cobro, igual que un servicio, para que el total de Ingresos de Caja
-  // sea siempre la plata real que entró, sea por servicio, producto o gift card.
-  cjD.cobros.push({id:'cb_'+ventaId,prof:'producto',cliente:cliente||'Venta mostrador',srv:(p?p.nombre:'Producto')+(cant>1?' × '+cant:''),monto:precio*cant,metodo,fecha,notas:'Venta de producto (Productos → Ventas)',baseComision:'servicio',montoServicio:precio*cant,ventaProdId:ventaId});
-  cjSv();
+  const montoTotal=precio*cant;
+  const srvDesc=(p?p.nombre:'Producto')+(cant>1?' × '+cant:'');
+  var ccId=null;
+  if(pendiente&&cl){
+    // Se carga como deuda en la cuenta corriente de la clienta, en vez de cobrarse ahora.
+    // Se cobra después desde la ficha de la clienta (pestaña Cuenta corriente → Pago),
+    // que ya registra sola el ingreso en Caja en ese momento.
+    if(!cl.cc)cl.cc=[];
+    ccId='cc_'+Date.now();
+    cl.cc.push({id:ccId,tipo:'cargo',monto:montoTotal,concepto:'Producto (pendiente): '+srvDesc,fecha:fecha,autor:(typeof NOMBRES_P!=='undefined'&&NOMBRES_P[curPUser])||curPUser||'admin'});
+    sv();
+  }
+  prodD.ventas.push({id:ventaId,prodId,cant,precio,cliente,metodo,fecha,pendiente:pendiente,clienteId:cl?cl.id:null,ccId:ccId});
+  if(!pendiente){
+    // Toda venta de producto cobrada en el momento tiene que quedar reflejada en Caja también
+    // (no solo en Productos): se registra sola como cobro, igual que un servicio, para que el
+    // total de Ingresos de Caja sea siempre la plata real que entró. Si quedó pendiente, en
+    // cambio, todavía no entró plata — no se registra en Caja hasta que se cobre la cuenta.
+    cjD.cobros.push({id:'cb_'+ventaId,prof:'producto',cliente:cliente||'Venta mostrador',srv:srvDesc,monto:montoTotal,metodo,fecha,notas:'Venta de producto (Productos → Ventas)',baseComision:'servicio',montoServicio:montoTotal,ventaProdId:ventaId});
+    cjSv();
+  }
   prodSv();renderProdVentas();renderProdStock();renderCaja();
-  ok.textContent='Venta registrada ✓';ok.classList.add('on');
+  ok.textContent=pendiente?'Venta registrada como pendiente en la cuenta de la clienta ✓':'Venta registrada ✓';ok.classList.add('on');
   setTimeout(()=>cerrarM('modal-venta-prod'),1500);
 }
 
 function borrarVentaProd(id){
   if(!confirm('¿Eliminar esta venta?'))return;
+  const v=prodD.ventas.find(function(x){return x.id===id;});
   prodD.eliminados=prodD.eliminados||[];
   prodD.eliminados.push({id:id,tipo:'venta',fecha:hoy()});
   prodD.ventas=prodD.ventas.filter(x=>x.id!==id);
   // Borrar también el cobro que se había registrado solo en Caja para esta venta
   cjD.cobros=cjD.cobros.filter(function(c){return c.ventaProdId!==id;});
+  // Si había quedado pendiente en la cuenta corriente de una clienta, borrar también ese cargo
+  // (si no, queda una deuda huérfana por una venta que ya no existe)
+  if(v&&v.pendiente&&v.clienteId&&v.ccId){
+    const cl=D.clientas.find(function(c){return c.id===v.clienteId;});
+    if(cl&&cl.cc){cl.cc=cl.cc.filter(function(m){return m.id!==v.ccId;});sv();}
+  }
   prodSv();cjSv();renderProdVentas();renderCaja();
 }
 
@@ -8108,13 +8181,20 @@ function rpPagarCom(profId,profNombre,monto){
   <label class="flbl">Producto</label><select class="fsel" id="mvp-prod" onchange="const p=prodD.productos.find(x=&gt;x.id===this.value);if(p)document.getElementById(&#39;mvp-precio&#39;).value=p.precio"></select>
   <label class="flbl">Cantidad</label><input class="finp" id="mvp-cant" type="number" min="1" value="1">
   <label class="flbl">Precio de venta ($)</label><input class="finp" id="mvp-precio" type="number" min="0">
-  <label class="flbl">Clienta</label><input class="finp" id="mvp-cliente" placeholder="Nombre (opcional)">
-  <label class="flbl">Método de pago</label>
-  <select class="fsel" id="mvp-metodo">
-    <option value="efectivo">Efectivo</option>
-    <option value="transferencia">Transferencia</option>
-    <option value="debito">Débito</option>
-  </select>
+  <label class="flbl">Clienta</label><input class="finp" id="mvp-cliente" placeholder="Nombre (obligatorio si es pendiente)" oninput="mvpActualizarInfoCC()">
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--texto);margin:.5rem 0;cursor:pointer">
+    <input type="checkbox" id="mvp-pendiente" style="width:16px;height:16px;accent-color:var(--oliva);cursor:pointer;flex-shrink:0" onchange="mvpTogglePendiente()">
+    🕐 Dejar pendiente de cobro (queda como deuda en la cuenta corriente de la clienta)
+  </label>
+  <div id="mvp-cc-info" style="display:none;font-size:11px;padding:6px 8px;margin-bottom:.6rem;border-radius:2px"></div>
+  <div id="mvp-metodo-wrap">
+    <label class="flbl">Método de pago</label>
+    <select class="fsel" id="mvp-metodo">
+      <option value="efectivo">Efectivo</option>
+      <option value="transferencia">Transferencia</option>
+      <option value="debito">Débito</option>
+    </select>
+  </div>
   <label class="flbl">Fecha</label><input class="finp" id="mvp-fecha" type="date">
   <div id="ok-mvp" class="ok"></div><div id="er-mvp" class="er"></div>
   <div class="mc-acts">
