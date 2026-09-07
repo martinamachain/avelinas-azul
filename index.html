@@ -1071,6 +1071,7 @@ function ld(){
 function sv(){
   try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}
   sbSave();
+  if(typeof refrescarClientasDatalist==='function')refrescarClientasDatalist();
 }
 let D=ld();
 
@@ -1088,6 +1089,26 @@ function pk(k){const[y,m,d]=k.split('-');return new Date(y,m-1,d)}
 function ff(d){return`${DS[d.getDay()]} ${d.getDate()} ${MSC[d.getMonth()]}`}
 function fmtPeso(n){return '$'+Math.round(n||0).toLocaleString('es-AR');}
 function hoy(){return fk(new Date())}
+// Normaliza un nombre para comparar/buscar clientas sin que rompa una tilde de más o de
+// menos, mayúsculas, o espacios extra al principio/final o duplicados en el medio
+// (ej: "maria castro", "María  Castro", "MARIA CASTRO" y "María Castro" matchean igual).
+function _normNombre(s){
+  return (s||'').toString().trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ');
+}
+function clientaPorNombre(nombre){
+  const n=_normNombre(nombre);
+  if(!n)return null;
+  return D.clientas.find(function(c){return _normNombre(c.n)===n;})||null;
+}
+// Lista de sugerencias (datalist) con los nombres de todas las clientas cargadas, para que
+// al escribir en el campo "Clienta" aparezcan las opciones existentes y no haga falta
+// tipear el nombre exacto de memoria. Se refresca cada vez que se abre un modal que la usa.
+function refrescarClientasDatalist(){
+  const dl=document.getElementById('dl-clientas');
+  if(!dl)return;
+  dl.innerHTML=(D.clientas||[]).slice().sort(function(a,b){return (a.n||'').localeCompare(b.n||'','es');})
+    .map(function(c){return '<option value="'+(c.n||'').replace(/"/g,'&quot;')+'">';}).join('');
+}
 var laserJornadaSel=null;
 function getDefaultLaserTurnos(){return[
   {id:'ls21_0',prof:'camila',fecha:'2026-05-21',hora:'08:10',duracion:75,cliente:'Lucia DiGiulio',servicio:'Combo 2 + Espalda + Gluteos',precio:53100,manual:true},
@@ -3599,6 +3620,7 @@ document.addEventListener('DOMContentLoaded', function(){
   ['a-cls-q','prod-buscar','ag-mt-cliente','cobro-cliente','p-clave'].forEach(function(id){
     var el=document.getElementById(id);if(el)el.value='';
   });
+  refrescarClientasDatalist();
   var drop=document.getElementById('ag-mt-cl-drop');if(drop){drop.style.display='none';drop.innerHTML='';}
   // Restaurar sesión desde sessionStorage y localStorage
   actualizarNavBtn();
@@ -4773,6 +4795,7 @@ function cjBorrar(coleccion,id){
 
 // === COBRO ===
 function abrirModalCobro(id){
+  refrescarClientasDatalist();
   const c=id?cjD.cobros.find(function(x){return x.id===id;}):null;
   // Se resetea acá; si este cobro viene de agCobrarDesdeVer(), esa función lo vuelve a
   // completar justo después con los turnos detectados del mismo día.
@@ -4982,7 +5005,7 @@ function cjActualizarInfoCC(){
   var infoEl = document.getElementById('cobro-cc-info');
   var opcsEl = document.getElementById('cobro-cc-opciones');
   if(!infoEl||!opcsEl) return;
-  var cl = D.clientas.find(function(c){return c.n.toLowerCase()===nombre.toLowerCase();});
+  var cl = clientaPorNombre(nombre);
   if(!cl||!cl.cc||!cl.cc.length){
     infoEl.style.display='none';
     opcsEl.style.display='none';
@@ -5061,7 +5084,7 @@ function cjGuardarCobro(){
     const giftCodigoUsado=(giftAplicadoMonto>0&&cobroGiftAplicada)?cobroGiftAplicada.codigo:null;
     // Verificar si hay saldo de cuenta corriente a aplicar
     const aplicarCC=document.getElementById('cobro-aplicar-cc')&&document.getElementById('cobro-aplicar-cc').checked;
-    const cl=D.clientas.find(function(c){return c.n.toLowerCase()===cliente.toLowerCase();});
+    const cl=clientaPorNombre(cliente);
     let montoFinal=Math.max(0,monto-giftAplicadoMonto);
     if(cl&&aplicarCC){
       const cc=fichaGetCC(cl);
@@ -5116,7 +5139,7 @@ function cjGuardarCobro(){
       const totalServicio=montoFinal||monto;
       const diff=pagaAhora-totalServicio;
       if(Math.abs(diff)>=1){
-        const clCC=D.clientas.find(function(c){return c.n.toLowerCase()===cliente.toLowerCase();});
+        const clCC=clientaPorNombre(cliente);
         if(clCC){
           if(!clCC.cc)clCC.cc=[];
           if(diff<0){
@@ -6084,6 +6107,7 @@ function renderProdVentas(){
 }
 
 function abrirModalVentaProd(id){
+  refrescarClientasDatalist();
   document.getElementById('mvp-id').value=id||'';
   document.getElementById('mvp-cant').value=1;
   document.getElementById('mvp-cliente').value='';
@@ -6119,7 +6143,7 @@ function mvpActualizarInfoCC(){
     infoEl.textContent='⚠️ Escribí el nombre de la clienta para dejarle la cuenta pendiente.';
     return;
   }
-  const cl=D.clientas.find(function(c){return c.n.toLowerCase()===nombre.toLowerCase();});
+  const cl=clientaPorNombre(nombre);
   if(!cl){
     infoEl.style.display='block';infoEl.style.background='rgba(200,80,60,.08)';infoEl.style.color='#c0392b';
     infoEl.textContent='⚠️ No encontré a "'+nombre+'" en Clientas. Cargala ahí primero para poder dejarle la cuenta pendiente.';
@@ -6155,7 +6179,7 @@ function guardarVentaProd(){
   var cl=null;
   if(pendiente){
     if(!cliente){er.textContent='Para dejarlo pendiente de cobro, ingresá el nombre de la clienta.';er.classList.add('on');return}
-    cl=D.clientas.find(function(c){return c.n.toLowerCase()===cliente.toLowerCase();});
+    cl=clientaPorNombre(cliente);
     if(!cl){er.textContent='No encontré a "'+cliente+'" en Clientas. Cargala ahí primero para poder dejarle la cuenta pendiente.';er.classList.add('on');return}
   }
   // Restar stock y registrar deuda si es consignacion
@@ -7429,7 +7453,7 @@ function laserGuardarNuevo(hora,fecha){
     duracion:parseInt(parts[1])||50,cliente:cliente,servicio:parts[0],
     precio:parseInt(parts[2])||0,senia:senia,notas:notas,manual:true};
   agD.turnos.push(turno);agSv();
-  var cl=D.clientas.find(function(c){return c.n.toLowerCase()===cliente.toLowerCase();});
+  var cl=clientaPorNombre(cliente);
   if(cl){cl.pts=(cl.pts||0)+1;sv();}
   var m=document.getElementById('laser-nuevo-modal');if(m)m.remove();
   renderLaserTimeline(fecha);
@@ -8181,7 +8205,7 @@ function rpPagarCom(profId,profNombre,monto){
   <label class="flbl">Producto</label><select class="fsel" id="mvp-prod" onchange="const p=prodD.productos.find(x=&gt;x.id===this.value);if(p)document.getElementById(&#39;mvp-precio&#39;).value=p.precio"></select>
   <label class="flbl">Cantidad</label><input class="finp" id="mvp-cant" type="number" min="1" value="1">
   <label class="flbl">Precio de venta ($)</label><input class="finp" id="mvp-precio" type="number" min="0">
-  <label class="flbl">Clienta</label><input class="finp" id="mvp-cliente" placeholder="Nombre (obligatorio si es pendiente)" oninput="mvpActualizarInfoCC()">
+  <label class="flbl">Clienta</label><input class="finp" id="mvp-cliente" list="dl-clientas" autocomplete="off" placeholder="Nombre (obligatorio si es pendiente)" oninput="mvpActualizarInfoCC()">
   <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--texto);margin:.5rem 0;cursor:pointer">
     <input type="checkbox" id="mvp-pendiente" style="width:16px;height:16px;accent-color:var(--oliva);cursor:pointer;flex-shrink:0" onchange="mvpTogglePendiente()">
     🕐 Dejar pendiente de cobro (queda como deuda en la cuenta corriente de la clienta)
@@ -8217,7 +8241,8 @@ function rpPagarCom(profId,profNombre,monto){
   <div class="mc-title" id="cobro-title">Registrar cobro</div>
   <input type="hidden" id="cobro-id">
   <label class="flbl">Profesional</label><select class="fsel" id="cobro-prof"></select>
-  <label class="flbl">Clienta</label><input class="finp" id="cobro-cliente" placeholder="Nombre de la clienta" oninput="cjActualizarInfoCC()">
+  <label class="flbl">Clienta</label><input class="finp" id="cobro-cliente" list="dl-clientas" autocomplete="off" placeholder="Nombre de la clienta" oninput="cjActualizarInfoCC()">
+  <datalist id="dl-clientas"></datalist>
   <input type="hidden" id="cobro-srv">
   <label class="flbl">Ítems (servicios y/o productos)</label>
   <div id="cobro-items-list" style="margin-bottom:.5rem"></div>
