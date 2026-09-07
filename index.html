@@ -900,6 +900,10 @@
     <input type="checkbox" id="mc-migrada" style="width:16px;height:16px;accent-color:var(--oliva);cursor:pointer">
     <label for="mc-migrada" style="font-size:12px;color:var(--gc);cursor:pointer">Clienta existente (migrada del sistema anterior)</label>
   </div>
+  <div style="display:flex;align-items:center;gap:.5rem;margin:.5rem 0">
+    <input type="checkbox" id="mc-personal" style="width:16px;height:16px;accent-color:var(--oliva);cursor:pointer">
+    <label for="mc-personal" style="font-size:12px;color:var(--gc);cursor:pointer">Es personal del local (no genera comisión en ventas de producto)</label>
+  </div>
   <div id="ok-mc" class="ok"></div><div id="er-mc" class="er"></div>
   <div class="mc-acts"><button class="btn-cancel" onclick="cerrarM(&#39;m-cl&#39;)">Cancelar</button><button class="btn-v" style="flex:1" onclick="guardarC()">Guardar</button></div>
 </div></div>
@@ -2592,6 +2596,7 @@ function abrirMC(id){
   document.getElementById('mc-n').value=c?.n||'';document.getElementById('mc-tel').value=c?.tel||'';document.getElementById('mc-pts').value=c?.pts||0;document.getElementById('mc-can').value=c?.can||0;
   var nacEl=document.getElementById('mc-nac');if(nacEl)nacEl.value=c?.nac||'';
   var migEl=document.getElementById('mc-migrada');if(migEl)migEl.checked=c?.migrada||false;
+  var perEl=document.getElementById('mc-personal');if(perEl)perEl.checked=c?.personal||false;
   document.getElementById('ok-mc').classList.remove('on');document.getElementById('er-mc').classList.remove('on');
   document.getElementById('m-cl').classList.add('on');
 }
@@ -2600,10 +2605,11 @@ function guardarC(){
   const pts=parseInt(document.getElementById('mc-pts').value)||0,can=parseInt(document.getElementById('mc-can').value)||0;
   const nac=document.getElementById('mc-nac')?document.getElementById('mc-nac').value:'';
   const migrada=document.getElementById('mc-migrada')?document.getElementById('mc-migrada').checked:false;
+  const personal=document.getElementById('mc-personal')?document.getElementById('mc-personal').checked:false;
   const ok=document.getElementById('ok-mc'),er=document.getElementById('er-mc');ok.classList.remove('on');er.classList.remove('on');
   if(!n||!tel){er.textContent='Completá nombre y teléfono.';er.classList.add('on');return}
-  if(eIds.c){const idx=D.clientas.findIndex(x=>x.id===eIds.c);if(idx>=0)D.clientas[idx]={...D.clientas[idx],n,tel,pts,can,nac,migrada}}
-  else{if(D.clientas.find(x=>x.tel===tel)){er.textContent='Ya existe esa clienta.';er.classList.add('on');return}D.clientas.push({id:'c_'+Date.now(),n,tel,pts,can,nac,migrada,hist:[{d:'Registro',f:fnow(),p:0}]})}
+  if(eIds.c){const idx=D.clientas.findIndex(x=>x.id===eIds.c);if(idx>=0)D.clientas[idx]={...D.clientas[idx],n,tel,pts,can,nac,migrada,personal}}
+  else{if(D.clientas.find(x=>x.tel===tel)){er.textContent='Ya existe esa clienta.';er.classList.add('on');return}D.clientas.push({id:'c_'+Date.now(),n,tel,pts,can,nac,migrada,personal,hist:[{d:'Registro',f:fnow(),p:0}]})}
   sv();filtraCls('');ok.textContent=eIds.c?'Actualizada ✓':'Registrada ✓';ok.classList.add('on');setTimeout(()=>cerrarM('m-cl'),1500);
 }
 function borrarC(id){const c=D.clientas.find(x=>x.id===id);if(!confirm(`¿Eliminar a ${c?.n}?`))return;D.clientas=D.clientas.filter(x=>x.id!==id);sv();filtraCls('')}
@@ -4218,11 +4224,18 @@ function cjFecha2(){
 function cjEnRango(fecha){return fecha>=cjFecha1()&&fecha<=cjFecha2();}
 // Ventas de producto del período que le corresponden en comisión a un profesional puntual
 // (según el "Comisiona" cargado en cada producto - por defecto, Lucía al 5% en todos).
+// Si la compradora es personal del local (ficha de clienta marcada "Es personal del local"),
+// esa venta puntual no genera comisión para nadie - a pedido de Martina, 7-sep-2026.
 function _ventasProdComisionables(profId){
   return (prodD.ventas||[]).filter(function(v){return cjEnRango(v.fecha);}).map(function(v){
     var p=prodD.productos.find(function(x){return x.id===v.prodId;});
     return {venta:v,producto:p};
-  }).filter(function(x){return x.producto&&x.producto.comisiona===profId;});
+  }).filter(function(x){
+    if(!x.producto||x.producto.comisiona!==profId)return false;
+    var cl=clientaPorNombre(x.venta.cliente);
+    if(cl&&cl.personal)return false;
+    return true;
+  });
 }
 function comisionProductosDelPeriodo(profId){
   return _ventasProdComisionables(profId).reduce(function(s,x){
