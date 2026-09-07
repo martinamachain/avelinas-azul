@@ -4216,6 +4216,19 @@ function cjFecha2(){
   return hoy();
 }
 function cjEnRango(fecha){return fecha>=cjFecha1()&&fecha<=cjFecha2();}
+// Ventas de producto del período que le corresponden en comisión a un profesional puntual
+// (según el "Comisiona" cargado en cada producto - por defecto, Lucía al 5% en todos).
+function _ventasProdComisionables(profId){
+  return (prodD.ventas||[]).filter(function(v){return cjEnRango(v.fecha);}).map(function(v){
+    var p=prodD.productos.find(function(x){return x.id===v.prodId;});
+    return {venta:v,producto:p};
+  }).filter(function(x){return x.producto&&x.producto.comisiona===profId;});
+}
+function comisionProductosDelPeriodo(profId){
+  return _ventasProdComisionables(profId).reduce(function(s,x){
+    return s+(x.venta.precio||0)*(x.venta.cant||1)*((x.producto.comisionPct||0)/100);
+  },0);
+}
 
 function cjSetPer(p,btn){
   cjPer=p; cjMesSel='';
@@ -4454,7 +4467,9 @@ function renderCjComisiones(cobros,adelantos,retiros){
   D.profesionales.forEach(function(p){
     const mis=cobros.filter(function(c){return c.prof===p.id;});
     const total=mis.reduce(function(s,c){return s+(c.monto||0);},0);
-    if(!total) return;
+    const ventasProd=_ventasProdComisionables(p.id);
+    const comisionProd=comisionProductosDelPeriodo(p.id);
+    if(!total&&!comisionProd) return;
     hayComis=true;
     const comPct=(p.comision||50)/100;
     // Base comision: usa montoServicio si baseComision==='servicio', sino monto cobrado
@@ -4462,7 +4477,8 @@ function renderCjComisiones(cobros,adelantos,retiros){
       if(c.baseComision==='cobrado')return s+(c.monto||0);
       return s+(c.montoServicio||c.monto||0);
     },0);
-    const comision=baseTotal*comPct;
+    const comisionSrv=baseTotal*comPct;
+    const comision=comisionSrv+comisionProd;
     const ade=adelantos.filter(function(a){return a.prof===p.id;}).reduce(function(s,a){return s+(a.monto||0);},0);
     const ret=retiros.filter(function(r){return r.prof===p.id;}).reduce(function(s,r){return s+(r.precio||0)*(r.cant||1);},0);
     const neto=Math.max(0,comision-ade-ret);
@@ -4474,14 +4490,15 @@ function renderCjComisiones(cobros,adelantos,retiros){
       +'<div style="font-family:Raleway,sans-serif;font-size:15px;font-weight:600;color:var(--oliva)">'+fmtPeso(neto)+'</div>'
       +'</div>'
       +'<div style="font-size:11px;color:var(--gc);line-height:1.8">'
-      +'Servicios: '+fmtPeso(total)+' · Comisión '+p.comision+'%: '+fmtPeso(comision)
+      +(total?'Servicios: '+fmtPeso(total)+' · Comisión '+p.comision+'%: '+fmtPeso(comisionSrv):'')
+      +(comisionProd?(total?'<br>':'')+'🛍 Comisión productos: '+fmtPeso(comisionProd):'')
       +(ade?'<br>Adelantos: -'+fmtPeso(ade):'')
       +(ret?'<br>Retiros: -'+fmtPeso(ret):'')
       +'</div>'
       +'<div style="display:flex;gap:6px;margin-top:.6rem">'
       +'<div style="display:flex;gap:6px;margin-top:.6rem">'
       +'<button class="btn-v cj-det-btn" data-det="'+detId+'" style="font-size:10px;padding:4px 8px">Ver detalle</button>'
-      +'<button class="btn-v cj-rec-btn" data-pid="'+p.id+'" data-pn="'+p.n.replace(/&/g,"&amp;")+'" data-tot="'+total+'" data-com="'+comision+'" data-ade="'+ade+'" data-ret="'+ret+'" data-neto="'+neto+'" style="font-size:10px;padding:4px 8px;background:var(--gris)">🖨 Recibo</button>'
+      +'<button class="btn-v cj-rec-btn" data-pid="'+p.id+'" data-pn="'+p.n.replace(/&/g,"&amp;")+'" data-tot="'+total+'" data-com="'+comisionSrv+'" data-comprod="'+comisionProd+'" data-ade="'+ade+'" data-ret="'+ret+'" data-neto="'+neto+'" style="font-size:10px;padding:4px 8px;background:var(--gris)">🖨 Recibo</button>'
       +'<div id="'+detId+'" style="display:none;margin-top:.7rem;border-top:1px solid var(--cd);padding-top:.6rem">'
       +mis.sort(function(a,b){return b.fecha.localeCompare(a.fecha);}).map(function(c){
         return '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:4px 0;border-bottom:.5px solid var(--cd)">'
@@ -4490,10 +4507,18 @@ function renderCjComisiones(cobros,adelantos,retiros){
           +'<div style="font-size:12px;font-weight:500;color:var(--oliva);white-space:nowrap;margin-left:8px">'+fmtPeso(c.monto)+'</div>'
           +'</div>';
       }).join('')
+      +ventasProd.sort(function(a,b){return b.venta.fecha.localeCompare(a.venta.fecha);}).map(function(x){
+        var comX=(x.venta.precio||0)*(x.venta.cant||1)*((x.producto.comisionPct||0)/100);
+        return '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:4px 0;border-bottom:.5px solid var(--cd)">'
+          +'<div><div style="font-size:12px;color:var(--texto)">🛍 '+x.producto.nombre+(x.venta.cant>1?' × '+x.venta.cant:'')+'</div>'
+          +'<div style="font-size:10px;color:var(--gc)">'+(x.venta.cliente||'Venta mostrador')+' · '+ff(pk(x.venta.fecha))+' · comisión '+(x.producto.comisionPct||0)+'%</div></div>'
+          +'<div style="font-size:12px;font-weight:500;color:var(--oliva);white-space:nowrap;margin-left:8px">'+fmtPeso(comX)+'</div>'
+          +'</div>';
+      }).join('')
       +'</div>';
     comLista.appendChild(d);
   });
-  if(!hayComis) comLista.innerHTML='<div class="empty">Sin servicios en el período.</div>';
+  if(!hayComis) comLista.innerHTML='<div class="empty">Sin servicios ni ventas de producto con comisión en el período.</div>';
 
   // Event delegation para botones de comisiones
   comLista.addEventListener('click',function(e){
@@ -4503,7 +4528,7 @@ function renderCjComisiones(cobros,adelantos,retiros){
     if(rec)imprimirRecibo(rec.dataset.pid,rec.dataset.pn,
       parseFloat(rec.dataset.tot),parseFloat(rec.dataset.com),
       parseFloat(rec.dataset.ade),parseFloat(rec.dataset.ret),
-      parseFloat(rec.dataset.neto));
+      parseFloat(rec.dataset.neto),parseFloat(rec.dataset.comprod));
   },{once:false});
 
   // Adelantos
@@ -4648,7 +4673,8 @@ function cjToggleDetalle(id){
   }});
 }
 
-function imprimirRecibo(profId,profNombre,total,comision,adelantos,retiros,neto){
+function imprimirRecibo(profId,profNombre,total,comision,adelantos,retiros,neto,comisionProd){
+  comisionProd=comisionProd||0;
   var periodo=cjPer==='mes'?(cjMesSel||new Date().toISOString().slice(0,7)):cjPer;
   var periodoLabel=periodo;
   if(periodo.length===7){
@@ -4657,6 +4683,7 @@ function imprimirRecibo(profId,profNombre,total,comision,adelantos,retiros,neto)
     periodoLabel=meses[parseInt(parts[1])-1]+' '+parts[0];
   }
   var cobrosP=cjD.cobros.filter(function(c){return c.prof===profId&&cjEnRango(c.fecha);});
+  var ventasProdP=typeof _ventasProdComisionables==='function'?_ventasProdComisionables(profId):[];
   var fecha=new Date().toLocaleDateString('es-AR');
   var profData=D.profesionales.find(function(p){return p.id===profId;});
   var comPctLabel=profData?profData.comision:50;
@@ -4702,9 +4729,20 @@ function imprimirRecibo(profId,profNombre,total,comision,adelantos,retiros,neto)
     html+='<div class="srv-row"><span>'+dStr+' · '+c.srv+'</span><span class="srv-monto">'+fmtPeso(c.monto)+'</span></div>';
   });
 
+  if(ventasProdP.length){
+    html+='<div class="dash" style="margin-top:4px"></div>';
+    ventasProdP.sort(function(a,b){return a.venta.fecha.localeCompare(b.venta.fecha);}).forEach(function(x){
+      var d=pk(x.venta.fecha);
+      var dStr=(d.getDate()<10?'0':'')+d.getDate()+'/'+(d.getMonth()<9?'0':'')+(d.getMonth()+1);
+      var comX=(x.venta.precio||0)*(x.venta.cant||1)*((x.producto.comisionPct||0)/100);
+      html+='<div class="srv-row"><span>'+dStr+' · 🛍 '+x.producto.nombre+(x.venta.cant>1?' × '+x.venta.cant:'')+'</span><span class="srv-monto">'+fmtPeso(comX)+'</span></div>';
+    });
+  }
+
   html+='<div class="dash" style="margin-top:8px"></div>'
-    +'<div class="calc-row"><span>Subtotal servicios ('+cobrosP.length+')</span><span>'+fmtPeso(total)+'</span></div>'
-    +'<div class="calc-row"><span>Comisión '+comPctLabel+'%</span><span>'+fmtPeso(comision)+'</span></div>'
+    +(total?'<div class="calc-row"><span>Subtotal servicios ('+cobrosP.length+')</span><span>'+fmtPeso(total)+'</span></div>'
+      +'<div class="calc-row"><span>Comisión '+comPctLabel+'%</span><span>'+fmtPeso(comision)+'</span></div>':'')
+    +(comisionProd?'<div class="calc-row"><span>Comisión venta de productos ('+ventasProdP.length+')</span><span>'+fmtPeso(comisionProd)+'</span></div>':'')
     +(adelantos>0?'<div class="calc-row"><span class="red">Adelantos descontados</span><span class="red">− '+fmtPeso(adelantos)+'</span></div>':'')
     +(retiros>0?'<div class="calc-row"><span class="red">Retiros descontados</span><span class="red">− '+fmtPeso(retiros)+'</span></div>':'')
     +'<div class="dash" style="margin-top:8px"></div>'
@@ -4734,36 +4772,43 @@ function exportarLiquidacion(cobros,adelantos,retiros){
     +'<div class="no-print" style="margin-bottom:16px"><button onclick="window.print()" style="background:#8b8f6b;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px">🖨 Imprimir</button></div>'
     +'<h1>Avelinas Azul — Liquidación de comisiones</h1>'
     +'<h2>Período: '+periodoLabel+' · Emitido: '+fecha+'</h2>'
-    +'<table><tr><th>Profesional</th><th>Servicios</th><th>Comisión</th><th>Adelantos</th><th>Retiros</th><th>A cobrar</th></tr>';
+    +'<table><tr><th>Profesional</th><th>Servicios</th><th>Comisión servicios</th><th>Comisión productos</th><th>Adelantos</th><th>Retiros</th><th>A cobrar</th></tr>';
 
   var totalGeneral=0;
   D.profesionales.forEach(function(p){
     var mis=cobros.filter(function(c){return c.prof===p.id;});
     var tot=mis.reduce(function(s,c){return s+(c.monto||0);},0);
-    if(!tot)return;
+    var comProd=comisionProductosDelPeriodo(p.id);
+    if(!tot&&!comProd)return;
     var comPct=(p.comision||50)/100;
-    var com=tot*comPct;
+    var comSrv=tot*comPct;
+    var com=comSrv+comProd;
     var ade=adelantos.filter(function(a){return a.prof===p.id;}).reduce(function(s,a){return s+(a.monto||0);},0);
     var ret=retiros.filter(function(r){return r.prof===p.id;}).reduce(function(s,r){return s+(r.precio||0)*(r.cant||1);},0);
     var neto=Math.max(0,com-ade-ret);
     totalGeneral+=neto;
-    html+='<tr><td>'+p.n+'</td><td>'+fmtPeso(tot)+'</td><td>'+fmtPeso(com)+'</td>'
+    html+='<tr><td>'+p.n+'</td><td>'+fmtPeso(tot)+'</td><td>'+fmtPeso(comSrv)+'</td><td>'+(comProd?fmtPeso(comProd):'—')+'</td>'
       +'<td class="red">'+(ade?fmtPeso(ade):'—')+'</td>'
       +'<td class="red">'+(ret?fmtPeso(ret):'—')+'</td>'
       +'<td class="green">'+fmtPeso(neto)+'</td></tr>';
   });
 
-  html+='<tr class="total"><td colspan="5">Total a pagar</td><td class="green">'+fmtPeso(totalGeneral)+'</td></tr></table>';
+  html+='<tr class="total"><td colspan="6">Total a pagar</td><td class="green">'+fmtPeso(totalGeneral)+'</td></tr></table>';
 
   // Detalle por profesional
   D.profesionales.forEach(function(p){
     var mis=cobros.filter(function(c){return c.prof===p.id;});
-    if(!mis.length)return;
+    var ventasProd=_ventasProdComisionables(p.id);
+    if(!mis.length&&!ventasProd.length)return;
     html+='<div style="margin-bottom:16px;page-break-inside:avoid">'
       +'<div style="font-weight:600;font-size:13px;margin-bottom:6px;color:#8b8f6b">'+p.n+'</div>'
       +'<table><tr><th>Fecha</th><th>Clienta</th><th>Servicio</th><th>Monto</th></tr>';
     mis.sort(function(a,b){return a.fecha.localeCompare(b.fecha);}).forEach(function(c){
       html+='<tr><td>'+c.fecha+'</td><td>'+c.cliente+'</td><td>'+c.srv+'</td><td class="green">'+fmtPeso(c.monto)+'</td></tr>';
+    });
+    ventasProd.sort(function(a,b){return a.venta.fecha.localeCompare(b.venta.fecha);}).forEach(function(x){
+      var comX=(x.venta.precio||0)*(x.venta.cant||1)*((x.producto.comisionPct||0)/100);
+      html+='<tr><td>'+x.venta.fecha+'</td><td>'+(x.venta.cliente||'Venta mostrador')+'</td><td>🛍 '+x.producto.nombre+(x.venta.cant>1?' × '+x.venta.cant:'')+' (comisión '+(x.producto.comisionPct||0)+'%)</td><td class="green">'+fmtPeso(comX)+'</td></tr>';
     });
     html+='</table></div>';
   });
@@ -4954,6 +4999,19 @@ function cobroRecalcularTotal(){
   const montoEl=document.getElementById('cobro-monto');
   if(montoEl)montoEl.value=total?Math.round(total*100)/100:'';
   cjActualizarDiferencia();
+  cjActualizarProfVisibilidad();
+}
+// Si el cobro es solo de productos (sin ningún servicio), no hace falta asignar profesional
+// -se guarda igual que las ventas rápidas de Productos → Ventas, prof:'producto', y así
+// tampoco entra en la liquidación de comisiones de nadie-. En cuanto se agrega un servicio,
+// vuelve a pedir profesional.
+function cjActualizarProfVisibilidad(){
+  const wrap=document.getElementById('cobro-prof-wrap');
+  const infoEl=document.getElementById('cobro-prof-info');
+  if(!wrap)return;
+  const haySoloProductos=cobroItems.length>0&&cobroItems.every(function(it){return it.tipo==='producto';});
+  wrap.style.display=haySoloProductos?'none':'block';
+  if(infoEl)infoEl.style.display=haySoloProductos?'block':'none';
 }
 
 function cjActualizarDiferencia(){
@@ -5042,13 +5100,16 @@ function cjCalcularDescuento(){
 }
 
 function cjGuardarCobro(){
-  const prof=document.getElementById('cobro-prof').value;
   const cliente=document.getElementById('cobro-cliente').value.trim();
   const ok=document.getElementById('ok-cobro'),er=document.getElementById('er-cobro');
   ok.classList.remove('on');er.classList.remove('on');
   const itemsValidos=cobroItems.filter(function(it){return it.nombre&&it.nombre.trim();});
   if(!cliente||!itemsValidos.length){er.textContent='Completá la clienta y agregá al menos un servicio o producto.';er.classList.add('on');return;}
   if(cobroItems.some(function(it){return it.tipo==='producto'&&!it.prodId;})){er.textContent='Elegí un producto en cada ítem de producto (o quitalo).';er.classList.add('on');return;}
+  // Si es solo venta de productos (sin servicio), no hace falta profesional: se guarda como
+  // 'producto', igual que la venta rápida de Productos → Ventas.
+  const haySoloProductos=itemsValidos.every(function(it){return it.tipo==='producto';});
+  const prof=haySoloProductos?'producto':document.getElementById('cobro-prof').value;
   const srv=itemsValidos.map(function(it){return it.nombre+(it.tipo==='producto'&&it.cant>1?' x'+it.cant:'')+(it.descPct?' (-'+it.descPct+'%)':'');}).join(', ');
   const montoBase=itemsValidos.reduce(function(s,it){return s+(it.precio||0)*(it.cant||1);},0);
   const monto=itemsValidos.reduce(function(s,it){return s+cobroSubtotalItem(it);},0);
@@ -5853,6 +5914,20 @@ if(prodD.productos){
     seen[p.id]=true;return true;
   });
 }
+// Todos los productos comisionan 5% para Lucía por defecto (a pedido de Martina, 7-sep-2026):
+// cualquier producto que no tenga ya una comisión propia asignada, la recibe automáticamente.
+// Se vuelve a aplicar cada vez que llegan productos de la nube (sbSync), así también alcanza
+// a los productos que se carguen de ahí en adelante, sin tener que tocarlos uno por uno.
+function _avMigrarComisionProductos(){
+  if(!prodD||!prodD.productos)return;
+  prodD.productos.forEach(function(p){
+    if(!p.comisiona){
+      p.comisiona='lucia';
+      p.comisionPct=5;
+    }
+  });
+}
+_avMigrarComisionProductos();
 let prodTabActual='stock',prodVentasPer='hoy',prodFiltroQ='',prodFiltroProv='';
 
 function prodSetTab(tab,btn){
@@ -6014,13 +6089,15 @@ function abrirModalProd(id){
   document.getElementById('mp2-precio').value=p?.precio||'';
   document.getElementById('mp2-stock').value=p?.stock||0;
   document.getElementById('mp2-minimo').value=p?.minimo||1;
-  document.getElementById('mp2-compct').value=p?.comisionPct||0;
+  // Un producto nuevo arranca comisionando 5% para Lucía por defecto (a pedido de Martina);
+  // uno existente conserva lo que ya tenía cargado.
+  document.getElementById('mp2-compct').value=p?(p.comisionPct||0):5;
   const psel=document.getElementById('mp2-prov');
   psel.innerHTML='<option value="">Sin proveedor</option>'+prodD.proveedores.map(v=>`<option value="${v.id}">${v.nombre}</option>`).join('');
   psel.value=p?.proveedor||'';
   const csel=document.getElementById('mp2-comisiona');
   csel.innerHTML='<option value="">Sin comisión</option>'+D.profesionales.map(pr=>`<option value="${pr.id}">${pr.n}</option>`).join('');
-  csel.value=p?.comisiona||'';
+  csel.value=p?(p.comisiona||''):'lucia';
   document.getElementById('ok-mp2').classList.remove('on');document.getElementById('er-mp2').classList.remove('on');
   document.getElementById('modal-prod').classList.add('on');
 }
@@ -6984,6 +7061,7 @@ async function sbSync(){
             localStorage.setItem(AG_KEY, JSON.stringify(agD));
           } else if(row.key==='productos'){
             prodD = parsed;
+            if(typeof _avMigrarComisionProductos==='function')_avMigrarComisionProductos();
             localStorage.setItem(PROD_KEY, JSON.stringify(prodD));
           } else if(row.key==='giftcards'){
             giftD = parsed;
@@ -8240,7 +8318,10 @@ function rpPagarCom(profId,profNombre,monto){
 <div id="modal-cobro" class="modal"><div class="mc">
   <div class="mc-title" id="cobro-title">Registrar cobro</div>
   <input type="hidden" id="cobro-id">
-  <label class="flbl">Profesional</label><select class="fsel" id="cobro-prof"></select>
+  <div id="cobro-prof-wrap">
+    <label class="flbl">Profesional</label><select class="fsel" id="cobro-prof"></select>
+  </div>
+  <div id="cobro-prof-info" style="display:none;font-size:11px;color:var(--gc);background:var(--crema);padding:6px 8px;margin-bottom:.6rem;border-radius:2px">🛍 Venta de producto — no hace falta asignar profesional. En cuanto agregues un servicio, vuelve a pedirlo.</div>
   <label class="flbl">Clienta</label><input class="finp" id="cobro-cliente" list="dl-clientas" autocomplete="off" placeholder="Nombre de la clienta" oninput="cjActualizarInfoCC()">
   <datalist id="dl-clientas"></datalist>
   <input type="hidden" id="cobro-srv">
