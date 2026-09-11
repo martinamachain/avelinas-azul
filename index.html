@@ -5611,10 +5611,18 @@ const GIFT_TEMPLATE_B64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2w
 const GIFT_KEY='av_gift_v1';
 function giftLd(){try{const d=localStorage.getItem(GIFT_KEY);return d?JSON.parse(d):{giftcards:[]}}catch(e){return {giftcards:[]}}}
 async function giftSv(){
+  // BUG encontrado el 9-sep-2026: esta función fusionaba con la nube y guardaba en
+  // localStorage, pero nunca llamaba a sbSaveKey — nunca empujaba el resultado a Supabase.
+  // Efecto real: cada gift card se guardaba solo en el dispositivo/navegador que la creó, y
+  // se perdía en cuanto ese dispositivo volvía a sincronizar (sbSync trae la nube entera y
+  // pisa la copia local). Es la causa de que las gift cards que cargó Lucía no le aparecieran
+  // en otro lado. Corregido: ahora sí se sube, igual que agenda/caja/productos/insumos.
   try{localStorage.setItem(GIFT_KEY,JSON.stringify(giftD))}catch(e){}
   const r=await _avFusionarConNube('giftcards',giftD,['giftcards']);
   giftD=r.data;
   try{localStorage.setItem(GIFT_KEY,JSON.stringify(giftD))}catch(e){}
+  if(!r.ok){if(typeof _avToast==='function')_avToast('⚠️ No se pudo verificar la nube antes de guardar. Se guardó solo en este dispositivo — se reintentará solo.',true);return;}
+  if(typeof sbSaveKey==='function')sbSaveKey('giftcards',giftD);
 }
 let giftD=giftLd();
 
@@ -7030,6 +7038,7 @@ setInterval(function(){
   if(typeof cjSv==='function')cjSv();
   if(typeof agSv==='function')agSv();
   if(typeof prodSv==='function')prodSv();
+  if(typeof giftSv==='function')giftSv();
 }, 300000);
 
 async function sbSync(){
