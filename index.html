@@ -2831,6 +2831,31 @@ function agSetVista(v){
   agRender();
 }
 
+// Calendario desplegable para saltar a una fecha puntual, tal cual el que mandó Martina de
+// referencia (11-sep-2026): un popup que se abre al clickear la fecha de arriba de la Agenda,
+// se ve flotando sobre la agenda de Día/Semana (no la reemplaza), y al elegir un día ahí se
+// va directo a esa fecha sin cambiar de vista.
+let agCalCursor=null;
+function agToggleCal(){
+  const pop=document.getElementById('ag-cal-popup');
+  if(!pop)return;
+  const abierto=pop.style.display!=='none';
+  if(abierto){pop.style.display='none';return;}
+  agCalCursor=new Date(agFecha);
+  agCalRender();
+  pop.style.display='block';
+}
+function agCalNavMes(d){
+  agCalCursor.setMonth(agCalCursor.getMonth()+d);
+  agCalRender();
+}
+function agCalElegirDia(fStr){
+  var p=fStr.split('-');
+  agFecha=new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2]));
+  document.getElementById('ag-cal-popup').style.display='none';
+  agRender();
+}
+
 function agGetSemana(){
   const l=agLun(agFecha),dias=[];
   for(let i=0;i<7;i++){const d=new Date(l);d.setDate(l.getDate()+i);dias.push(d)}
@@ -2947,12 +2972,77 @@ function agRenderMobile(){
   });
 }
 
+// Vista Mes de la Agenda — pedido de Martina el 11-sep-2026 ("quiero un calendario para ver
+// los meses completos"). Antes la Agenda solo tenía Día y Semana; acá se arma una grilla
+// tradicional de calendario (Lun a Dom, semanas completas incluyendo días del mes anterior/
+// siguiente para completar la grilla) con un resumen de turnos por día. Clic en un día lleva
+// a la vista Día de esa fecha, que es donde ya se puede ver/editar el detalle turno por turno.
+// Popup de calendario — réplica del picker nativo del navegador que mandó Martina de
+// referencia: caja blanca flotante con sombra, flecha‹mes/año›flecha arriba, fila de días de
+// la semana, y la grilla con SOLO el número de cada día (sin puntos, sin conteos). Se abre
+// clickeando la fecha de arriba de la Agenda y queda flotando SOBRE la vista Día/Semana que
+// ya está abierta — no la reemplaza. Elegir un día ahí salta directo a esa fecha.
+function agCalRender(){
+  const pop=document.getElementById('ag-cal-popup');
+  if(!pop||!agCalCursor)return;
+  const DS2=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const MS=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+  const primerDelMes=new Date(agCalCursor.getFullYear(),agCalCursor.getMonth(),1);
+  const inicio=agLun(primerDelMes);
+  const mesActual=agCalCursor.getMonth();
+  const fechaSeleccionada=agFk(agFecha);
+
+  let out='<div style="background:#fff;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.18);border:1px solid var(--cd);width:280px;padding:.7rem">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:.2rem .1rem .6rem">'
+    +'<button onclick="agCalNavMes(-1)" style="border:none;background:none;cursor:pointer;font-size:15px;color:var(--texto);width:26px;height:26px;border-radius:50%">‹</button>'
+    +'<div style="font-family:Raleway,sans-serif;font-size:12px;font-weight:600;color:var(--texto)">'+MS[mesActual]+' '+agCalCursor.getFullYear()+'</div>'
+    +'<button onclick="agCalNavMes(1)" style="border:none;background:none;cursor:pointer;font-size:15px;color:var(--texto);width:26px;height:26px;border-radius:50%">›</button>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(7,1fr);text-align:center;margin-bottom:.1rem">'
+    +DS2.map(function(d){return '<div style="font-family:Raleway,sans-serif;font-size:9px;color:var(--gc)">'+d+'</div>';}).join('')
+    +'</div>';
+
+  const dia=new Date(inicio);
+  const filas=[];
+  for(let semana=0;semana<6;semana++){
+    const semanaDias=[];
+    for(let diaSemana=0;diaSemana<7;diaSemana++){
+      semanaDias.push(new Date(dia));
+      dia.setDate(dia.getDate()+1);
+    }
+    filas.push(semanaDias);
+    if(dia.getMonth()!==mesActual)break;
+  }
+
+  filas.forEach(function(semanaDias){
+    out+='<div style="display:grid;grid-template-columns:repeat(7,1fr);text-align:center">';
+    semanaDias.forEach(function(d){
+      const fStr=agFk(d);
+      const esDelMes=d.getMonth()===mesActual;
+      const esSeleccionado=fStr===fechaSeleccionada;
+      out+='<div style="padding:1px 0">'
+        +'<div onclick="agCalElegirDia(\''+fStr+'\')" style="cursor:pointer;width:28px;height:28px;line-height:28px;margin:0 auto;border-radius:50%;font-family:Raleway,sans-serif;font-size:11px;'
+        +(esSeleccionado?'background:#e8eee3;color:var(--oliva-dark);font-weight:600;':'color:'+(esDelMes?'var(--texto)':'var(--cd)')+';font-weight:400;')
+        +'">'+d.getDate()+'</div>'
+        +'</div>';
+    });
+    out+='</div>';
+  });
+  out+='</div>';
+  pop.innerHTML=out;
+}
+
 function agRender(){
   // En mobile, usar vista simplificada por profesional
   if(window.innerWidth<=600&&document.getElementById('ag-grid')){
     agRenderMobile();
     return;
   }
+  // Si el popup del calendario está abierto, lo volvemos a dibujar con la fecha actual
+  // (por si cambió por otra vía) sin cerrarlo.
+  const _calPop=document.getElementById('ag-cal-popup');
+  if(_calPop&&_calPop.style.display!=='none'&&agCalCursor)agCalRender();
   const fechas=agVista==='dia'?[new Date(agFecha)]:agGetSemana();
   const profs=AG_PROFS.filter(function(p){return agFiltroProfs.includes(p.id);});
   const DS=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -4037,7 +4127,7 @@ function cjLd(){
     return parsed;
   }catch(e){return{cobros:[],egresos:[],adelantos:[],retiros:[],cierres:[]};}}
 async function cjSv(){
-  const r=await _avFusionarConNube('caja',cjD,['cobros','egresos','adelantos','retiros','cierres']);
+  const r=await _avFusionarConNube('caja',cjD,['cobros','egresos','adelantos','retiros','cierres'],'cancelados');
   cjD=r.data;
   try{localStorage.setItem(CJ_KEY,JSON.stringify(cjD))}catch(e){}
   if(!r.ok){if(typeof _avToast==='function')_avToast('⚠️ No se pudo verificar la nube antes de guardar. Se guardó solo en este dispositivo — se reintentará solo.',true);return;}
@@ -4390,6 +4480,11 @@ function renderCaja(){
   if(cjTab==='comisiones') renderCjComisiones(cobros,adelantos,retiros);
   if(cjTab==='reportes') renderCjReportes(cobros,retiros);
   if(cjTab==='giftcards') renderGiftLista();
+  // BUG encontrado el 11-sep-2026: a diferencia de las otras pestañas de Caja, "Cierre" nunca
+  // llamaba a su función de render — renderCierre() existía pero no la invocaba nadie. Por eso
+  // al entrar a la pestaña no aparecía ningún número (quedaba con lo que hubiera en el HTML
+  // de entrada, prácticamente vacío).
+  if(cjTab==='cierre') renderCierre();
 }
 
 function renderCjIngresos(cobros){
@@ -4848,6 +4943,14 @@ function cjBorrar(coleccion,id){
     }
   }
   cjD[coleccion]=cjD[coleccion].filter(function(x){return x.id!==id;});
+  // BUG encontrado el 11-sep-2026: borrar un cobro/egreso/adelanto/retiro no se mantenía —
+  // al guardar, cjSv() fusiona con la nube por id (_avUnirPorId) y como el registro borrado
+  // seguía existiendo del lado de la nube, la fusión lo volvía a traer y lo guardaba de nuevo,
+  // resucitándolo. Igual que en agenda/productos, ahora se deja un "tombstone" en
+  // cjD.cancelados con el id borrado, y cjSv() lo usa para filtrar definitivamente ese id de
+  // todas las colecciones de Caja en cada fusión futura, sin importar qué versión trae la nube.
+  cjD.cancelados=cjD.cancelados||[];
+  cjD.cancelados.push({id:id,tipo:coleccion,fecha:hoy()});
   cjSv();renderCaja();
 }
 
@@ -5690,10 +5793,19 @@ function abrirModalGiftVender(){
   document.getElementById('gift-v-mensaje').value='';
   document.getElementById('gift-v-metodo').value='efectivo';
   document.getElementById('gift-v-fecha').value=hoy();
+  giftVenderSugerirVencimiento();
   document.getElementById('ok-gift-v').classList.remove('on');
   document.getElementById('er-gift-v').classList.remove('on');
   giftVenderRecalc();
   document.getElementById('modal-gift-vender').classList.add('on');
+}
+// Sugiere 1 mes después de la fecha de emisión, pero queda como sugerencia editable:
+// pedido de Martina el 11-sep-2026 para poder elegir vencimientos distintos (promos más
+// largas, extender una gift card puntual, etc.) en vez de que quede fijo siempre en 1 mes.
+function giftVenderSugerirVencimiento(){
+  var fEl=document.getElementById('gift-v-fecha'),vEl=document.getElementById('gift-v-vencimiento');
+  if(!fEl||!vEl)return;
+  vEl.value=giftFechaVencimiento(fEl.value||hoy());
 }
 function giftVenderTipoChange(){
   var tipo=document.getElementById('gift-v-tipo').value;
@@ -5734,7 +5846,10 @@ function giftVenderGuardar(){
   if(!comprador||!valor){er.textContent='Completá comprador/a y el valor de la gift card.';er.classList.add('on');return;}
   if(tipo==='servicio'&&!document.getElementById('gift-v-servicio-sel').value){er.textContent='Elegí un servicio.';er.classList.add('on');return;}
   const codigo=giftGenerarCodigo();
-  const fechaVencimiento=giftFechaVencimiento(fecha);
+  // Antes se pisaba siempre con fecha+1 mes; ahora se respeta lo que se haya puesto/editado
+  // en el campo de vencimiento, y solo se calcula automático si por algún motivo vino vacío.
+  const vencInput=document.getElementById('gift-v-vencimiento');
+  const fechaVencimiento=(vencInput&&vencInput.value)?vencInput.value:giftFechaVencimiento(fecha);
   const gc={
     id:'gc_'+Date.now(),
     codigo:codigo,
@@ -5861,10 +5976,30 @@ function renderGiftLista(){
       +'<div style="font-size:11px;color:var(--gc)">Vence: '+giftFmtFecha(g.fechaVencimiento)+'</div>'
       +'<div style="display:flex;gap:.4rem;margin-top:.4rem">'
       +'<button class="btn-cancel" style="padding:.3rem .6rem;font-size:11px" onclick="giftMostrarResultado(giftBuscarPorCodigo(\''+g.codigo+'\'))">Ver PDF</button>'
+      +'<button class="btn-cancel" style="padding:.3rem .6rem;font-size:11px" onclick="giftAbrirEditarVenc(\''+g.id+'\')">Editar vencimiento</button>'
       +(est==='activo'?'<button class="btn-cancel" style="padding:.3rem .6rem;font-size:11px;color:#c0392b" onclick="giftAnular(\''+g.id+'\')">Anular</button>':'')
       +'</div>'
       +'</div>';
   }).join('');
+}
+// Editar vencimiento de una gift card ya creada — pedido de Martina el 11-sep-2026.
+var _giftEditarVencId=null;
+function giftAbrirEditarVenc(id){
+  var gc=giftD.giftcards.find(function(g){return g.id===id;});
+  if(!gc)return;
+  _giftEditarVencId=id;
+  document.getElementById('gev-codigo').textContent=gc.codigo;
+  document.getElementById('gev-fecha').value=gc.fechaVencimiento||'';
+  document.getElementById('modal-gift-editar-venc').classList.add('on');
+}
+function giftGuardarEditarVenc(){
+  var gc=giftD.giftcards.find(function(g){return g.id===_giftEditarVencId;});
+  var nuevaFecha=document.getElementById('gev-fecha').value;
+  if(!gc||!nuevaFecha)return;
+  gc.fechaVencimiento=nuevaFecha;
+  giftSv();
+  renderGiftLista();
+  cerrarM('modal-gift-editar-venc');
 }
 function giftAnular(id){
   var gc=giftD.giftcards.find(function(g){return g.id===id;});
@@ -6743,7 +6878,7 @@ function guardarProv(){
   document.getElementById('ok-mprov').classList.add('on');
   setTimeout(function(){cerrarM('modal-prov');},1500);
 }
-function borrarProv(id){if(!confirm('¿Eliminar este proveedor?'))return;prodD.proveedores=prodD.proveedores.filter(x=>x.id!==id);prodSv();renderProveedores()}
+function borrarProv(id){if(!confirm('¿Eliminar este proveedor?'))return;prodD.proveedores=prodD.proveedores.filter(x=>x.id!==id);prodD.eliminados=prodD.eliminados||[];prodD.eliminados.push({id:id,tipo:'proveedor',fecha:hoy()});prodSv();renderProveedores()}
 
 // CUENTA CORRIENTE
 function renderCC(){renderProvCC();}
@@ -6775,7 +6910,7 @@ function guardarCC(){
   document.getElementById('ok-cc').textContent='Guardado ✓';document.getElementById('ok-cc').classList.add('on');
   setTimeout(function(){cerrarM('modal-cc');},1500);
 }
-function borrarCC(id){if(!confirm('¿Eliminar?'))return;prodD.cuentaCorriente=prodD.cuentaCorriente.filter(x=>x.id!==id);prodSv();renderCC()}
+function borrarCC(id){if(!confirm('¿Eliminar?'))return;prodD.cuentaCorriente=prodD.cuentaCorriente.filter(x=>x.id!==id);prodD.eliminados=prodD.eliminados||[];prodD.eliminados.push({id:id,tipo:'cuentaCorriente',fecha:hoy()});prodSv();renderCC()}
 
 // ===== LASER BOOKING =====
 let lsSrv = null, lsSlot = null;
@@ -8435,12 +8570,22 @@ function rpPagarCom(profId,profNombre,monto){
     <option value="debito">Débito</option>
     <option value="credito">Crédito</option>
   </select>
-  <label class="flbl">Fecha de emisión</label><input class="finp" id="gift-v-fecha" type="date">
-  <div style="font-size:11px;color:var(--gc);margin-top:.3rem">Vence 1 mes después de la fecha de emisión.</div>
+  <label class="flbl">Fecha de emisión</label><input class="finp" id="gift-v-fecha" type="date" oninput="giftVenderSugerirVencimiento()">
+  <label class="flbl">Fecha de vencimiento</label><input class="finp" id="gift-v-vencimiento" type="date">
+  <div style="font-size:11px;color:var(--gc);margin-top:.3rem">Se sugiere 1 mes después de la emisión, pero se puede cambiar.</div>
   <div id="ok-gift-v" class="ok"></div><div id="er-gift-v" class="er"></div>
   <div class="mc-acts">
     <button class="btn-cancel" onclick="cerrarM(&#39;modal-gift-vender&#39;)">Cancelar</button>
     <button class="btn-v" style="flex:1" onclick="giftVenderGuardar()">Vender</button>
+  </div>
+</div></div>
+
+<div id="modal-gift-editar-venc" class="modal"><div class="mc">
+  <div class="mc-title">Editar vencimiento — <span id="gev-codigo"></span></div>
+  <label class="flbl">Nueva fecha de vencimiento</label><input class="finp" id="gev-fecha" type="date">
+  <div class="mc-acts">
+    <button class="btn-cancel" onclick="cerrarM(&#39;modal-gift-editar-venc&#39;)">Cancelar</button>
+    <button class="btn-v" style="flex:1" onclick="giftGuardarEditarVenc()">Guardar</button>
   </div>
 </div></div>
 
@@ -8648,7 +8793,10 @@ function rpPagarCom(profId,profNombre,monto){
 <div id="pg-agenda" class="pg">
   <div id="ag-toolbar" style="background:var(--texto);padding:.6rem 1rem;margin-top:54px;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;position:sticky;top:0;z-index:10">
     <button class="ag-btn" onclick="agNavSem(-1)">◀</button>
-    <div id="ag-titulo" style="font-family:Raleway,sans-serif;font-size:13px;color:var(--crema);flex:1;text-align:center">Mar 19 Mayo 2026</div>
+    <div style="position:relative;flex:1;text-align:center">
+      <div id="ag-titulo" onclick="agToggleCal()" style="font-family:Raleway,sans-serif;font-size:13px;color:var(--crema);cursor:pointer;display:inline-block">Mar 19 Mayo 2026</div>
+      <div id="ag-cal-popup" style="display:none;position:absolute;top:28px;left:50%;transform:translateX(-50%);z-index:50;text-align:left"></div>
+    </div>
   <div id="ag-pf" style="display: flex; gap: 0.3rem; flex-wrap: wrap; padding: 0.3rem 1rem; background: var(--texto);"><button class="ag-pf-btn" onclick="agToggleAll(this)" id="ag-pf-all" style="background:var(--oliva);border-color:var(--oliva);color:#fff">Todas</button><button class="ag-pf-btn" onclick="agToggleProf(this.dataset.id,this)" data-id="emilia" id="ag-pf-emilia" style="background:#a8c5a0;border-color:#a8c5a0;color:#2d4a28">Emilia</button><button class="ag-pf-btn" onclick="agToggleProf(this.dataset.id,this)" data-id="camila" id="ag-pf-camila" style="background:#a8b8c5;border-color:#a8b8c5;color:#1e3040">Camila</button><button class="ag-pf-btn" onclick="agToggleProf(this.dataset.id,this)" data-id="ludovica" id="ag-pf-ludovica" style="background:#c5b8a8;border-color:#c5b8a8;color:#40301e">Ludovica</button><button class="ag-pf-btn" onclick="agToggleProf(this.dataset.id,this)" data-id="rosario" id="ag-pf-rosario" style="background:#c5a8b8;border-color:#c5a8b8;color:#40202e">Rosario</button></div>
   <div id="ag-legend" style="display: flex; gap: 0.8rem; flex-wrap: wrap; padding: 0.3rem 1rem;"></div>
     <button class="ag-btn" onclick="agNavSem(1)">▶</button>
